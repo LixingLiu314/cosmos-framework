@@ -4,5 +4,6 @@
 """Minimal Action dataset wrappers."""
 
 from cosmos_framework.data.vfm.action.datasets.droid_lerobot_dataset import DROIDLeRobotDataset
+from cosmos_framework.data.vfm.action.datasets.gr1_lerobot_dataset import GR1LeRobotDataset
 
-__all__ = ["DROIDLeRobotDataset"]
+__all__ = ["DROIDLeRobotDataset", "GR1LeRobotDataset"]

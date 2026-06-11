@@ -3,6 +3,7 @@
 
 import collections
 import copy
+import os
 from typing import Any, Iterator, NamedTuple
 
 import torch
@@ -133,11 +134,22 @@ def _build_params_with_metadata(
     param_dict = {pn: p for pn, p in net_params.items() if p.requires_grad}
 
     params_with_metadata: list[tuple[nn.Parameter, ParamMetadata]] = []
+    selected_stats: dict[str, dict[str, float | int]] = collections.defaultdict(
+        lambda: {"tensors": 0, "elements": 0, "lr": 0.0}
+    )
 
     for pn, p in param_dict.items():
-        if len(keys_to_select) > 0 and not any(key in pn for key in keys_to_select):
-            p.requires_grad = False
-            continue
+        matched_key = None
+        if len(keys_to_select) > 0:
+            for key in keys_to_select:
+                if key in pn:
+                    matched_key = key
+                    break
+            if matched_key is None:
+                p.requires_grad = False
+                continue
+        else:
+            matched_key = "all"
 
         # Find the matching multiplier for the parameter.
         matched_mult = 1.0
@@ -146,16 +158,23 @@ def _build_params_with_metadata(
                 matched_mult = mult
                 break
 
+        effective_lr = base_lr * matched_mult
+
         if disable_weight_decay_for_1d_params and p.dim() < 2:
             enable_weight_decay = False
         else:
             enable_weight_decay = True
 
+        stats = selected_stats[matched_key]
+        stats["tensors"] += 1
+        stats["elements"] += p.numel()
+        stats["lr"] = effective_lr
+
         params_with_metadata.append(
             (
                 p,
                 ParamMetadata(
-                    lr=base_lr * matched_mult,
+                    lr=effective_lr,
                     enable_weight_decay=enable_weight_decay,
                 ),
             )
@@ -163,9 +182,24 @@ def _build_params_with_metadata(
 
     log.info(
         f"Total tensors: {len(net_params)}, "
-        f"trainable tensors: {len(param_dict)}, "
+        f"trainable tensors before optimizer filter: {len(param_dict)}, "
         f"selected tensors: {len(params_with_metadata)}"
     )
+
+    if os.environ.get("RANK", "0") == "0":
+        total_elements = sum(int(stats["elements"]) for stats in selected_stats.values())
+        log.info(
+            f"[GR1_OPT_PARAMS] selected_total: tensors={len(params_with_metadata):,}, "
+            f"params={total_elements:,}"
+        )
+        for key in keys_to_select or sorted(selected_stats):
+            stats = selected_stats.get(key)
+            if stats is None:
+                continue
+            log.info(
+                f"[GR1_OPT_PARAMS] {key}: tensors={int(stats["tensors"]):,}, "
+                f"params={int(stats["elements"]):,}, lr={float(stats["lr"]):.6g}"
+            )
 
     return params_with_metadata
 

@@ -18,6 +18,7 @@ EMBODIMENT_TO_DOMAIN_ID: dict[str, int] = {
     "robomind-ur": 13,
     "agibotworld": 15,
     "fractal": 20,
+    "gr1_lerobot": 31, ##not sure if it's for new embodiment, but num_embodiment_domains=32
 }
 
 
@@ -34,6 +35,7 @@ EMBODIMENT_TO_RAW_ACTION_DIM: dict[str, int] = {
     "robomind-ur": 10,
     "agibotworld": 29,
     "fractal": 10,
+    "gr1_lerobot": 44,
 }
 
 

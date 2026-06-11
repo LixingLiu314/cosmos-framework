@@ -98,4 +98,5 @@ def make_config() -> Config:
     # Register shipped experiments explicitly.
     import cosmos_framework.configs.base.experiment.sft.vision_sft_nano  # noqa: F401
     import cosmos_framework.configs.base.experiment.sft.vision_sft_super  # noqa: F401
+    import cosmos_framework.configs.base.experiment.action.posttrain_config.gr1_robot_policy_posttrain  # noqa: F401
     return c
