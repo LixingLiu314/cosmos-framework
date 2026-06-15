@@ -371,7 +371,7 @@ class OptimizersContainer(Stateful):
         return get_optimizer_state_dict(
             model=self.model,
             optimizers=self.optimizers,
-            options=StateDictOptions(flatten_optimizer_state_dict=True),
+            options=StateDictOptions(flatten_optimizer_state_dict=True, cpu_offload=True),
         )
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
@@ -387,7 +387,7 @@ class OptimizersContainer(Stateful):
             model=self.model,
             optimizers=self.optimizers,
             optim_state_dict=state_dict,
-            options=StateDictOptions(flatten_optimizer_state_dict=True),
+            options=StateDictOptions(flatten_optimizer_state_dict=True, cpu_offload=True),
         )
 
 

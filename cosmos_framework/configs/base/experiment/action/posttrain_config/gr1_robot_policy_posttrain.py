@@ -86,9 +86,10 @@ class GR1RobotPolicyDataPacker(DataPacker):
     def sft_process_sample(self, item: dict) -> dict:
         item = dict(item)
         self._debug_print("raw_dataset_item", item)
-        item["mode"] = "policy"
-        if "state" in item:
-            item["history_action"] = item["state"]
+        item.setdefault("mode", "policy")
+        state = item.pop("state", None)
+        if state is not None:
+            item["history_action"] = state
         sample = self.transform(item, resolution=self.resolution)
         self._debug_print("after_action_transform", sample)
         self._debug_count += 1
@@ -114,7 +115,7 @@ class GR1RobotPolicyDataPacker(DataPacker):
         return tokens
 
     def sft_collate_fn(self, samples: list[dict], max_len: int, ignore_label_id: int = -100) -> dict:
-        list_of_list_keys = {"text_token_ids", "video", "action", "state"}
+        list_of_list_keys = {"text_token_ids", "video", "action"}
         list_keys = {"sequence_plan", "domain_id", "raw_action_dim", "image_size"}
         optional_drop_keys = set()
         batch: dict[str, Any] = {}
@@ -160,8 +161,8 @@ gr1_robot_policy_posttrain = LazyDict(
             {"override /model": "mot_fsdp"},
             {"override /data_train": None},
             {"override /data_val": None},
-            {"override /optimizer": "adamw"},
-            {"override /scheduler": "lambdacosine"},
+            {"override /optimizer": "fusedadamw"},
+            {"override /scheduler": "lambdalinear"},
             {"override /checkpoint": "local"},
             {"override /callbacks": ["basic", "optimization", "job_monitor", "generation"]},
             {"override /ema": "power"},
@@ -180,8 +181,8 @@ gr1_robot_policy_posttrain = LazyDict(
         ),
         model=dict(config=_model_config()),
         optimizer=dict(
-            betas=[0.9, 0.95],
-            eps=1.0e-6,
+            betas=[0.9, 0.99],
+            eps=1.0e-08,
             fused=True,
             keys_to_select=[
                 "moe_gen",
@@ -192,23 +193,23 @@ gr1_robot_policy_posttrain = LazyDict(
                 "llm2action",
                 "action_modality_embed",
             ],
-            lr=1.0e-5,
+            lr=2.0e-04,
             lr_multipliers={
                 "action2llm": 5.0,
                 "llm2action": 5.0,
                 "action_modality_embed": 5.0,
             },
-            optimizer_type="AdamW",
-            weight_decay=0,
+            optimizer_type="FusedAdam",
+            weight_decay=0.05,
         ),
         scheduler=dict(
-            lr_scheduler_type="LambdaCosine",
+            lr_scheduler_type="LambdaLinear",
             cycle_lengths=[10000],
-            f_max=[1.0],
-            f_min=[0.1],
+            f_max=[0.4],
+            f_min=[0.0],
             f_start=[0.0],
             verbosity_interval=0,
-            warm_up_steps=[50],
+            warm_up_steps=[0],
         ),
         trainer=dict(
             distributed_parallelism="fsdp",
@@ -231,7 +232,7 @@ gr1_robot_policy_posttrain = LazyDict(
                 dataloader_speed=dict(every_n=100, save_s3=False, step_size=1),
                 device_monitor=dict(every_n=200, log_memory_detail=True, save_s3=False, step_size=1),
                 expert_heatmap=dict(every_n=1000),
-                grad_clip=dict(clip_norm=0.1, force_finite=True),
+                grad_clip=dict(clip_norm=1.0, force_finite=True),
                 heart_beat=dict(every_n=200, save_s3=False, step_size=1, update_interval_in_minute=20),
                 iter_speed=dict(every_n=1, hit_thres=50, save_s3=False, save_s3_every_log_n=500),
                 low_precision=dict(update_iter=1),
@@ -259,7 +260,13 @@ gr1_robot_policy_posttrain = LazyDict(
             dcp_async_mode_enabled=False,
             enable_gcs_patch_in_boto3=True,
             keys_not_to_resume=[],
-            keys_to_skip_loading=["net_ema."],
+            keys_to_skip_loading=[
+                "net_ema.",
+                "action2llm",
+                "llm2action",
+                "action_modality_embed",
+                "action_pos_embed",
+            ],
             load_ema_to_reg=False,
             load_path="${oc.env:BASE_CHECKPOINT_PATH,/root/.cache/huggingface/hub/models--nvidia--Cosmos3-Nano}",
             load_training_state=False,
@@ -276,7 +283,7 @@ gr1_robot_policy_posttrain = LazyDict(
             data_source=L(GR1LeRobotDataset)(
                 root="${oc.env:GR1_DATA_ROOT,/root/workspace/mengya/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/}",
                 chunk_length=16,
-                mode="policy",
+                mode="joint",
                 viewpoint="ego_view",
             ),
             data_packer=L(GR1RobotPolicyDataPacker)(

@@ -31,35 +31,35 @@ mode = "full"
 vae_path = "${oc.env:WAN_VAE_PATH,pretrained/tokenizers/video/wan2pt2/Wan2.2_VAE.pth}"
 
 [optimizer]
-betas          = [0.9, 0.95]
-eps            = 1.0e-6
+betas          = [0.9, 0.99]
+eps            = 1.0e-8
 fused          = true
-lr             = 1.0e-5
-weight_decay   = 0.0
+lr             = 2.0e-4
+weight_decay   = 0.05
 keys_to_select = []
 
 [scheduler]
-cycle_lengths      = [10000]
-f_max              = [1.0]
-f_min              = [0.1]
+cycle_lengths      = [60000]
+f_max              = [0.4]
+f_min              = [0.0]
 f_start            = [0.0]
 verbosity_interval = 0
-warm_up_steps      = [200]
+warm_up_steps      = [0]
 
 [trainer]
 distributed_parallelism = "fsdp"
 grad_accum_iter         = 1
 logging_iter            = 1
-max_iter                = 10000
+max_iter                = 60000
 
 [trainer.callbacks.compile_tokenizer]
 enabled = false
 
 [trainer.callbacks.grad_clip]
-clip_norm    = 0.1
+clip_norm    = 1.0
 force_finite = true
 
 [checkpoint]
 load_path            = "${oc.env:BASE_CHECKPOINT_PATH,/root/.cache/huggingface/hub/models--nvidia--Cosmos3-Nano}"
-keys_to_skip_loading = ["net_ema."]
-save_iter            = 1000
+keys_to_skip_loading = ["net_ema.", "action2llm", "llm2action", "action_modality_embed", "action_pos_embed"]
+save_iter            = 5000
