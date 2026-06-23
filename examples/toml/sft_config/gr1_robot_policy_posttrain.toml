@@ -1,0 +1,65 @@
+[job]
+task       = "vfm"
+experiment = "gr1_robot_policy_posttrain"
+project    = "cosmos3"
+group      = "gr1_robot_policy"
+name       = "gr1_robot_policy_posttrain"
+wandb_mode = "${oc.env:WANDB_MODE,online}"
+
+[model]
+precision                    = "bfloat16"
+max_num_tokens_after_packing = 45056
+joint_attn_implementation    = "two_way"
+
+[model.ema]
+enabled = false
+
+[model.parallelism]
+data_parallel_shard_degree     = -1
+data_parallel_replicate_degree = 1
+context_parallel_shard_degree  = 1
+cfg_parallel_shard_degree      = 1
+
+[model.compile]
+enabled         = false
+compile_dynamic = true
+
+[model.activation_checkpointing]
+mode = "full"
+
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH,pretrained/tokenizers/video/wan2pt2/Wan2.2_VAE.pth}"
+
+[optimizer]
+betas          = [0.9, 0.99]
+eps            = 1.0e-8
+fused          = true
+lr             = 2.0e-4
+weight_decay   = 0.05
+keys_to_select = ["moe_gen", "time_embedder", "vae2llm", "llm2vae", "action2llm", "llm2action", "action_modality_embed"]
+
+[scheduler]
+cycle_lengths      = [10000]
+f_max              = [0.4]
+f_min              = [0.0]
+f_start            = [0.0]
+verbosity_interval = 0
+warm_up_steps      = [0]
+
+[trainer]
+distributed_parallelism = "fsdp"
+grad_accum_iter         = 1
+logging_iter            = 1
+max_iter                = 10000
+
+[trainer.callbacks.compile_tokenizer]
+enabled = false
+
+[trainer.callbacks.grad_clip]
+clip_norm    = 1.0
+force_finite = true
+
+[checkpoint]
+load_path            = "${oc.env:BASE_CHECKPOINT_PATH,/root/.cache/huggingface/hub/models--nvidia--Cosmos3-Nano}"
+keys_to_skip_loading = ["net_ema.", "action2llm", "llm2action", "action_modality_embed", "action_pos_embed"]
+save_iter            = 1000
