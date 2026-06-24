@@ -9,7 +9,7 @@ STARVLA_DIR="/root/workspace/lixing/starVLA"
 VENV="/root/workspace/mengya/cosmos-framework/.venv/bin/activate"
 
 # --- 29D checkpoint (update ITER as new checkpoints become available) ---
-ITER="iter_000005000"
+ITER="iter_000010000"
 CKPT_29D="/root/workspace/mengya/cosmos-framework/outputs/train/cosmos3/gr1_robot_policy_29d/gr1_robot_policy_posttrain_29d/checkpoints/${ITER}/"
 
 # --- GPU / port ---
