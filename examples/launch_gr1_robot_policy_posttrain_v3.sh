@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# GR1 robot-policy posttraining v2 launcher.
+# GR1 robot-policy posttraining v3 launcher.
 #
-# Changes from v1:
-#   - Uses gr1_robot_policy_posttrain_v2 experiment (loss_scale=10, image aug)
-#   - TOML: gr1_robot_policy_posttrain_v2.toml
+# Changes from v2:
+#   - 29D action (filter zero parts, per-dataset normalization)
+#   - Keeps: loss_scale=10, encode_exact_durations=[17], image aug
 set -uo pipefail
 export HF_HUB_OFFLINE=1
 export WANDB_ENTITY="lixing11177-nan"
@@ -14,7 +14,7 @@ NVIDIA_DIR="$SITE/nvidia"
 ls -l "$NVIDIA_DIR/cuda_runtime/lib/libcudart.so.12"
 ln -sfn cuda_runtime "$NVIDIA_DIR/cudart"
 
-TOML_FILE="examples/toml/sft_config/gr1_robot_policy_posttrain_v2.toml"
+TOML_FILE="examples/toml/sft_config/gr1_robot_policy_posttrain_v3.toml"
 : "${GR1_DATA_ROOT:=/root/workspace/mengya/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/}"
 : "${COSMOS3_NANO_HF_PATH:=/root/.cache/huggingface/hub/models--nvidia--Cosmos3-Nano/snapshots/03c14e74a6ddb51985d614b75d70f2443efc6a05}"
 : "${BASE_CHECKPOINT_PATH:=/root/workspace/mengya/cosmos-framework/examples/checkpoints/Cosmos3-Nano-DCP}"
@@ -49,7 +49,7 @@ TAIL_OVERRIDES=(
   "dataloader_train.persistent_workers=false"
   "dataloader_train.max_batch_size=128"
   "dataloader_train.pool_size=128"
-  "dataloader_train.prefetch_factor=4"  ###todo policy+batchsize+model optimize+exp record
+  "dataloader_train.prefetch_factor=4"
 )
 
 if [[ -d "$SITE/nvidia" ]]; then

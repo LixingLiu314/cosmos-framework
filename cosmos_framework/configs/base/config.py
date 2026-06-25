@@ -99,4 +99,5 @@ def make_config() -> Config:
     import cosmos_framework.configs.base.experiment.action.posttrain_config.action_policy_droid_nano  # noqa: F401
     import cosmos_framework.configs.base.experiment.action.posttrain_config.gr1_robot_policy_posttrain  # noqa: F401
     import cosmos_framework.configs.base.experiment.action.posttrain_config.gr1_robot_policy_posttrain_v2  # noqa: F401
+    import cosmos_framework.configs.base.experiment.action.posttrain_config.gr1_robot_policy_posttrain_v3  # noqa: F401
     return c

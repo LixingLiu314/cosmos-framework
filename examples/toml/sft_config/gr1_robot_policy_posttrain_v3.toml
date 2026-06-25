@@ -1,16 +1,15 @@
-# GR1 robot-policy posttraining v2
+# GR1 robot-policy posttraining v3
 #
-# Changes from v1:
-#   - loss_scale = 10.0 (balance vision vs action loss)
-#   - encode_exact_durations = [17] (pin VAE encode to 17 frames)
-#   - image augmentation enabled in Python config (GR1LeRobotDatasetV2)
+# Changes from v2:
+#   - 29D action (filter zero parts, per-dataset normalization)
+#   - Keeps: loss_scale = 10.0, encode_exact_durations = [17], image aug
 
 [job]
 task       = "vfm"
-experiment = "gr1_robot_policy_posttrain_v2"
+experiment = "gr1_robot_policy_posttrain_v3"
 project    = "cosmos3"
-group      = "gr1_robot_policy_v2_policy"
-name       = "gr1_robot_policy_posttrain_v2_policy"
+group      = "gr1_robot_policy_v3"
+name       = "gr1_robot_policy_posttrain_v3"
 wandb_mode = "${oc.env:WANDB_MODE,online}"
 
 [model]

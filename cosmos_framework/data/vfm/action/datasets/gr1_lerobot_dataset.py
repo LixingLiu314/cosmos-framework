@@ -17,14 +17,15 @@ import torch
 from lerobot.datasets.video_utils import decode_video_frames
 from torch.utils.data import Dataset
 
-from cosmos_framework.data.vfm.action.action_normalization import load_action_stats, normalize_action
+from cosmos_framework.data.vfm.action.action_normalization import normalize_action
 from cosmos_framework.data.vfm.action.action_spec import Joint, build_action_spec
 from cosmos_framework.data.vfm.action.domain_utils import get_domain_id
 from cosmos_framework.data.vfm.action.pose_utils import compute_idle_frames
 
 Viewpoint = Literal["ego_view"]
 
-_NORMALIZER_PATH = Path(__file__).parent / "gr1_lerobot_normalization.json"
+_ACTIVE_GR1_PART_ORDER = ("left_arm", "right_arm", "left_hand", "right_hand", "waist")
+_ZERO_GR1_PARTS = frozenset({"left_leg", "right_leg", "neck"})
 _MODE_CHOICES = ("forward_dynamics", "inverse_dynamics", "policy")
 _DEFAULT_ROOT = (
     "/root/workspace/mengya/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/"
@@ -40,9 +41,10 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 class GR1LeRobotDataset(Dataset):
     """GR1 joint-action dataset backed by LeRobot parquet/video files.
 
-    The action and state layouts are read from ``meta/modality.json``. For the
-    current GR1 data this produces a 44D joint vector:
-    left arm/hand/leg, neck, right arm/hand/leg, and waist.
+    The action and state layouts are read from ``meta/modality.json`` and
+    filtered to the non-zero tabletop control parts.  The effective GR1 policy
+    vector is 29D in RoboCasa order: left arm, right arm, left hand, right hand,
+    and waist.  Constant-zero left/right leg and neck channels are excluded.
     """
 
     def __init__(
@@ -183,10 +185,20 @@ class GR1LeRobotDataset(Dataset):
         )
 
     def _ordered_parts(self, kind: str) -> list[tuple[str, int, int]]:
-        parts = []
-        for name, item in self._modality[kind].items():
-            parts.append((name, int(item["start"]), int(item["end"])))
-        return sorted(parts, key=lambda item: item[1])
+        raw_parts = {
+            name: (name, int(item["start"]), int(item["end"]))
+            for name, item in self._modality[kind].items()
+            if name not in _ZERO_GR1_PARTS
+        }
+        ordered = [raw_parts[name] for name in _ACTIVE_GR1_PART_ORDER if name in raw_parts]
+        ordered.extend(
+            part
+            for name, part in sorted(raw_parts.items(), key=lambda item: item[1][1])
+            if name not in _ACTIVE_GR1_PART_ORDER
+        )
+        if not ordered:
+            raise ValueError(f"GR1 {kind} modality has no active parts after filtering zero parts")
+        return ordered
 
     def _single_original_key(self, kind: str) -> str:
         keys = {str(item["original_key"]) for item in self._modality[kind].values()}
@@ -366,10 +378,7 @@ class GR1LeRobotDataset(Dataset):
     def _load_norm_stats(self) -> dict[str, torch.Tensor]:
         if self._norm_stats is not None:
             return self._norm_stats
-        self._norm_stats = {
-            key: torch.from_numpy(value).float()
-            for key, value in load_action_stats(str(_NORMALIZER_PATH)).items()
-        }
+        self._norm_stats = self._stats_for_parts(self._action_key, self._action_parts)
         return self._norm_stats
 
     def _load_state_stats(self) -> dict[str, torch.Tensor]:
