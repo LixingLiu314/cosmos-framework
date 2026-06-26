@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: OpenMDW-1.1
+
+# ============================================================================
+# GR1 action-policy SFT — run config for the `gr1_robot_policy_posttrain`
+# experiment. Recipe knobs (optimizer/lr, scheduler type, grad_clip,
+# count-based batch, action-head skip-on-load, dataset knobs) live in the
+# registered experiment; this file only sets run-level scalars (iters, ckpt
+# cadence, parallelism shape, wandb, VAE path).
+#
+# Env required:
+#   GR1_DATA_ROOT=/path/to/gr1_lerobot_root   (single dataset OR parent of datasets)
+#   BASE_CHECKPOINT_PATH=<Cosmos3-Nano DCP dir>
+#   WAN_VAE_PATH=<Wan2.2_VAE.pth>
+#   IMAGINAIRE_OUTPUT_ROOT=/path/to/output_root   # persist checkpoints
+# ============================================================================
+
+[job]
+task         = "vfm"
+experiment   = "gr1_robot_policy_posttrain"
+project      = "cosmos3_action"
+group        = "gr1_robot_policy"
+name         = "gr1_robot_policy_posttrain"
+wandb_mode   = "online"
+
+[model]
+precision = "bfloat16"
+
+[model.parallelism]
+data_parallel_shard_degree     = 8    # 8-GPU model shard; set replicate for multi-node HSDP
+data_parallel_replicate_degree = 1
+
+[model.activation_checkpointing]
+mode           = "full"
+save_ops_regex = ["fmha"]
+
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH}"
+
+[scheduler]
+cycle_lengths = [20000]   # match max_iter
+
+[trainer]
+max_iter     = 20000
+logging_iter = 50
+
+[checkpoint]
+load_path = "${oc.env:BASE_CHECKPOINT_PATH}"
+save_iter = 500
+
+# max_samples_per_batch is 128 in the experiment (per-rank samples). On lower-memory
+# GPUs, reduce it at launch, e.g.:
+#   --opts dataloader_train.max_samples_per_batch=32

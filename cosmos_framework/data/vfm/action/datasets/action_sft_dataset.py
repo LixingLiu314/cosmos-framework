@@ -19,6 +19,7 @@ from typing import Any
 from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
 from cosmos_framework.data.vfm.action.datasets.droid_lerobot_dataset import DROIDLeRobotDataset
+from cosmos_framework.data.vfm.action.datasets.gr1_lerobot_dataset import GR1LeRobotDataset
 from cosmos_framework.data.vfm.action.transforms import ActionTransformPipeline
 
 
@@ -125,6 +126,57 @@ def get_action_droid_sft_dataset(
         use_image_augmentation=use_image_augmentation,
         use_filter_dict=use_filter_dict,
         filter_dict_path=filter_dict_path,
+    )
+    transform = ActionTransformPipeline(
+        tokenizer_config=tokenizer_config,
+        cfg_dropout_rate=cfg_dropout_rate,
+        max_action_dim=max_action_dim,
+        append_viewpoint_info=append_viewpoint_info,
+        append_duration_fps_timestamps=append_duration_fps_timestamps,
+        append_resolution_info=append_resolution_info,
+        append_idle_frames=append_idle_frames,
+    )
+    sft = ActionSFTDataset(dataset, transform, resolution)
+    if iterable_shuffle:
+        return ActionIterableShuffleDataset(sft, seed=episode_shuffle_seed)
+    return sft
+
+
+def get_action_gr1_sft_dataset(
+    *,
+    root: str,
+    fps: float | None = None,
+    chunk_length: int = 16,
+    mode: str = "policy",
+    use_state: bool = True,
+    viewpoint: str = "ego_view",
+    use_image_augmentation: bool = False,
+    resolution: str | int = "256",
+    max_action_dim: int = 64,
+    tokenizer_config: dict | None = None,
+    cfg_dropout_rate: float = 0.1,
+    append_viewpoint_info: bool = True,
+    append_duration_fps_timestamps: bool = True,
+    append_resolution_info: bool = True,
+    append_idle_frames: bool = True,
+    iterable_shuffle: bool = False,
+    episode_shuffle_seed: int = 42,
+) -> Dataset:
+    """Build the GR1 action SFT dataset: 29D joint policy (filter zero parts),
+    per-dataset min/max normalization (from each dataset's ``meta/stats.json``),
+    ego_view. Mirrors ``get_action_droid_sft_dataset``.
+
+    ``use_state`` prepends the initial observed state as a conditioning action
+    frame inside the dataset (DROID-style), so the transform marks frame 0 as
+    clean — matching how the RoboCasa eval server feeds ``history_action``."""
+    dataset = GR1LeRobotDataset(
+        root=root,
+        fps=fps,
+        chunk_length=chunk_length,
+        mode=mode,
+        viewpoint=viewpoint,
+        use_state=use_state,
+        use_image_augmentation=use_image_augmentation,
     )
     transform = ActionTransformPipeline(
         tokenizer_config=tokenizer_config,
