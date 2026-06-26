@@ -68,7 +68,7 @@ EXTRA_DATASET_CHECK='[[ -f "$GR1_DATA_ROOT/meta/info.json" ]] || compgen -G "$GR
 : "${MAX_SAMPLES_PER_BATCH:=128}"
 : "${NUM_WORKERS:=16}"
 : "${PREFETCH_FACTOR:=4}"
-: "${PERSISTENT_WORKERS:=true}"
+: "${PERSISTENT_WORKERS:=False}"
 
 # Run name -> job.name (drives BOTH the output dir and the W&B run name). Give each
 # experiment a distinct RUN_NAME to get a fresh output dir + new W&B run (no resume,
@@ -86,5 +86,14 @@ TAIL_OVERRIDES=(
     "dataloader_train.dataloader.persistent_workers=${PERSISTENT_WORKERS}"
     ${EXTRA_TAIL_OVERRIDES:-}
 )
+
+# Capture git provenance so cosmos_framework.utils.launch records commit/branch/diff
+# into the W&B run config (JOB_INFO/*). launch.py only reads these files if present
+# in CWD, so write them at the repo root before the trainer starts.
+if git rev-parse --git-dir > /dev/null 2>&1; then
+    git rev-parse HEAD > git_commit.txt
+    git rev-parse --abbrev-ref HEAD > git_branch.txt
+    git diff > git_diff.txt
+fi
 
 source "$(dirname "${BASH_SOURCE[0]}")/_sft_launcher_common.sh"
