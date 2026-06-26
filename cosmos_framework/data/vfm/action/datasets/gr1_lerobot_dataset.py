@@ -138,6 +138,11 @@ class GR1LeRobotDataset(ActionBaseDataset):
         self._win_cumsum: np.ndarray = np.zeros(0, dtype=np.int64)
         self._row_cache_path: Path | None = None
         self._row_cache: list[dict[str, Any]] | None = None
+        # Whole-episode decoded-frame cache: the episode-shuffle stream visits an
+        # episode's windows sequentially, so we decode the episode's video ONCE and
+        # slice each window from memory (~chunk_length x fewer frame decodes).
+        self._video_cache_path: Path | None = None
+        self._video_cache: torch.Tensor | None = None
         self._build_window_index()
 
     # ------------------------------------------------------------------ #
@@ -346,7 +351,7 @@ class GR1LeRobotDataset(ActionBaseDataset):
         action_rows = observation_rows[: self._chunk_length]
         episode = self._episodes[int(observation_rows[0]["episode_index"])]
 
-        video = self._load_video(episode, observation_rows)
+        video = self._load_video(episode, episode_path, rows, row_start)
         raw_action = self._extract_modal_vector(action_rows, self._action_key, self._action_parts)
         raw_state = (
             self._extract_modal_vector(observation_rows[:1], self._state_key, self._state_parts)
@@ -357,10 +362,16 @@ class GR1LeRobotDataset(ActionBaseDataset):
 
         return self._build_result(mode=mode, video=video, action=raw_action, ai_caption=task, raw_state=raw_state)
 
-    def _load_video(self, episode: dict[str, Any], observation_rows: list[dict[str, Any]]) -> torch.Tensor:
-        timestamps = [float(row["timestamp"]) for row in observation_rows]
-        frame_timestamps = [float(episode.get(f"videos/{self._video_key}/from_timestamp", 0.0)) + ts for ts in timestamps]
-        video = decode_video_frames(self._video_path(episode, self._video_key), frame_timestamps, self._tolerance_s)
+    def _load_video(
+        self,
+        episode: dict[str, Any],
+        episode_path: Path,
+        rows: list[dict[str, Any]],
+        row_start: int,
+    ) -> torch.Tensor:
+        # Slice this window from the (cached) whole-episode decode, then augment.
+        full = self._load_episode_video(episode, episode_path, rows)
+        video = full[row_start : row_start + self._chunk_length + 1]
         if not self._use_image_augmentation:
             return video
         if self._image_augmentor is None:
@@ -370,9 +381,29 @@ class GR1LeRobotDataset(ActionBaseDataset):
                 T.Resize((h, w), antialias=True),
                 T.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08),
             ])
-        # One sampled set of params applied uniformly across all frames (temporally
-        # consistent), resampled per __getitem__.
+        # One sampled set of params applied uniformly across the window's frames
+        # (temporally consistent), resampled per __getitem__.
         return self._image_augmentor(video)
+
+    def _load_episode_video(
+        self,
+        episode: dict[str, Any],
+        episode_path: Path,
+        rows: list[dict[str, Any]],
+    ) -> torch.Tensor:
+        """Decode and cache the whole episode's frames ([T, C, H, W]) once. Decoding
+        every overlapping window separately re-decodes ~chunk_length frames per step;
+        decoding the episode in one sequential pass and slicing windows is ~chunk_length
+        x fewer decodes (the stream is sequential within an episode, so the cache hits
+        for all but the first window)."""
+        if self._video_cache_path == episode_path and self._video_cache is not None:
+            return self._video_cache
+        from_timestamp = float(episode.get(f"videos/{self._video_key}/from_timestamp", 0.0))
+        frame_timestamps = [from_timestamp + float(row["timestamp"]) for row in rows]
+        frames = decode_video_frames(self._video_path(episode, self._video_key), frame_timestamps, self._tolerance_s)
+        self._video_cache_path = episode_path
+        self._video_cache = frames
+        return frames
 
     def _video_path(self, episode: dict[str, Any], video_key: str) -> Path:
         episode_index = int(episode["episode_index"])
