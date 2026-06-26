@@ -18,7 +18,7 @@
 [job]
 task         = "vfm"
 experiment   = "gr1_robot_policy_merge"
-project      = "cosmos3_action"
+project      = "cosmos3"
 group        = "gr1_robot_policy"
 name         = "gr1_robot_policy_merge"
 wandb_mode   = "online"

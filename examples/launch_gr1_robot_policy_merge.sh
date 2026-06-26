@@ -66,13 +66,20 @@ EXTRA_DATASET_CHECK='[[ -f "$GR1_DATA_ROOT/meta/info.json" ]] || compgen -G "$GR
 # `dataloader_train.max_samples_per_batch` (the old DataPacker `max_batch_size`;
 # the old `pool_size` no longer exists).
 : "${MAX_SAMPLES_PER_BATCH:=256}"
-: "${NUM_WORKERS:=16}"
-: "${PREFETCH_FACTOR:=4}"
+: "${NUM_WORKERS:=20}"
+: "${PREFETCH_FACTOR:=8}"
 : "${PERSISTENT_WORKERS:=true}"
+
+# Run name -> job.name (drives BOTH the output dir and the W&B run name). Give each
+# experiment a distinct RUN_NAME to get a fresh output dir + new W&B run (no resume,
+# no manual rm). Reusing the same RUN_NAME while keeping its output dir resumes that
+# run (and continues its W&B run). Default keeps the recipe's base name.
+: "${RUN_NAME:=gr1_robot_policy_merge}"
 
 # Extra Hydra overrides from the environment: a space-separated string word-split into
 # the TAIL_OVERRIDES array (an exported string survives `bash <wrapper>`).
 TAIL_OVERRIDES=(
+    "job.name=${RUN_NAME}"
     "dataloader_train.max_samples_per_batch=${MAX_SAMPLES_PER_BATCH}"
     "dataloader_train.dataloader.num_workers=${NUM_WORKERS}"
     "dataloader_train.dataloader.prefetch_factor=${PREFETCH_FACTOR}"
