@@ -3,22 +3,34 @@
 
 """GR1 LeRobot dataset for Cosmos Action posttraining.
 
-Built for the *new* action dataloader stack (``ActionSFTDataset`` +
-``ActionIterableShuffleDataset`` + ``RankPartitionedDataLoader``), mirroring the
-DROID recipe. The base ``__getitem__`` returns the raw sample dict consumed by
-``ActionTransformPipeline`` (``video``/``action``/``ai_caption``/``mode``/
-``domain_id``/``viewpoint``/``idle_frames``/``conditioning_fps``).
+A member of the ``ActionBaseDataset`` family (like ``DROIDLeRobotDataset``),
+built for the new action dataloader stack (``ActionSFTDataset`` +
+``ActionIterableShuffleDataset`` + ``RankPartitionedDataLoader``). ``__getitem__``
+returns the raw sample dict consumed by ``ActionTransformPipeline``
+(``video``/``action``/``ai_caption``/``mode``/``domain_id``/``viewpoint``/
+``idle_frames``/``conditioning_fps``).
 
-Action layout is 29D in RoboCasa order (left arm, right arm, left hand, right
-hand, waist); constant-zero left/right leg and neck channels are excluded.
-Per-dataset min/max normalization is read from each dataset's ``meta/stats.json``.
+It reuses the base class for the common machinery (``_choose_mode``,
+``_compute_idle_frames``, the property accessors, ``domain_id``/``action_names``)
+and overrides only what the GR1 data format forces:
 
-``use_state`` prepends the initial observed state as a *conditioning* (clean)
-action frame -> action length becomes ``chunk+1 == video_length`` and
-``build_sequence_plan_from_mode`` marks frame 0 as conditioning. The prepended
-state is normalized with the *state* stats (``observation.state``) and the
-commanded chunk with the *action* stats, matching how the RoboCasa eval server
-feeds ``history_action`` at inference (train/inference parity).
+  * GR1 ships LeRobot **v2** meta (``episodes.jsonl``/``tasks.jsonl``) rather than
+    the family's v3 parquet meta, and may point at a *parent* directory of many
+    datasets (multi-root concat) -> custom ``__init__`` (cannot call
+    ``super().__init__``, which reads ``meta/tasks.parquet`` and materializes every
+    row as a dict).
+  * Action/state layouts are read from ``meta/modality.json`` and filtered to the
+    non-zero tabletop control parts -> 29D in RoboCasa order (left arm, right arm,
+    left hand, right hand, waist); constant-zero left/right leg + neck excluded.
+  * Per-dataset min/max normalization from each dataset's ``meta/stats.json`` for
+    BOTH action and state (no class-level stats file) -> custom ``_build_result`` /
+    ``_load_norm_stats``.
+  * ``use_state`` prepends the initial observed state as a *conditioning* (clean)
+    action frame -> action length becomes ``chunk+1 == video_length`` and
+    ``build_sequence_plan_from_mode`` marks frame 0 as conditioning. The prepended
+    state is normalized with the *state* stats and the commanded chunk with the
+    *action* stats, matching how the RoboCasa eval server feeds ``history_action``
+    at inference (train/inference parity).
 """
 
 from __future__ import annotations
@@ -34,18 +46,16 @@ import pyarrow.parquet as pq
 import torch
 import torchvision.transforms as T
 from lerobot.datasets.video_utils import decode_video_frames
-from torch.utils.data import Dataset
 
 from cosmos_framework.data.vfm.action.action_normalization import normalize_action
-from cosmos_framework.data.vfm.action.action_spec import Joint, build_action_spec
+from cosmos_framework.data.vfm.action.action_spec import ActionSpec, Joint, build_action_spec
+from cosmos_framework.data.vfm.action.datasets.base_dataset import ActionBaseDataset
 from cosmos_framework.data.vfm.action.domain_utils import get_domain_id
-from cosmos_framework.data.vfm.action.pose_utils import compute_idle_frames
 
 Viewpoint = Literal["ego_view"]
 
 _ACTIVE_GR1_PART_ORDER = ("left_arm", "right_arm", "left_hand", "right_hand", "waist")
 _ZERO_GR1_PARTS = frozenset({"left_leg", "right_leg", "neck"})
-_MODE_CHOICES = ("forward_dynamics", "inverse_dynamics", "policy")
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -53,13 +63,8 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-class GR1LeRobotDataset(Dataset):
+class GR1LeRobotDataset(ActionBaseDataset):
     """GR1 joint-action dataset backed by LeRobot parquet/video files.
-
-    The action and state layouts are read from ``meta/modality.json`` and
-    filtered to the non-zero tabletop control parts. The effective GR1 policy
-    vector is 29D in RoboCasa order: left arm, right arm, left hand, right hand,
-    and waist. Constant-zero left/right leg and neck channels are excluded.
 
     ``root`` may point either at a single LeRobot dataset (``meta/info.json``
     present) or at a parent directory of multiple datasets (``*/meta/info.json``),
@@ -77,102 +82,82 @@ class GR1LeRobotDataset(Dataset):
         use_state: bool = False,
         use_image_augmentation: bool = False,
     ) -> None:
-        super().__init__()
+        # We deliberately do NOT call super().__init__: ActionBaseDataset.__init__
+        # reads v3 parquet meta (meta/episodes/*.parquet, meta/tasks.parquet) the GR1
+        # v2 export lacks, and materializes every row as a Python dict. We set the
+        # base-expected attributes directly and load GR1's jsonl/modality meta below.
         if viewpoint != "ego_view":
             raise NotImplementedError("GR1 LeRobot currently exposes only the ego_view camera.")
 
+        # --- base-class attributes (read by inherited helpers/properties) ---
         self._root = Path(root)
+        self._chunk_length = int(chunk_length)
+        self._mode = mode
+        self._pose_convention = "backward_framewise"
+        self._tolerance_s = float(tolerance_s)
+        self._viewpoint = viewpoint
+        self._domain_name = "gr1_lerobot"
+        self._domain_id = get_domain_id(self._domain_name)
+        self._action_normalization = None  # GR1 normalizes internally (per-dataset min/max)
+        self._norm_stats: dict[str, torch.Tensor] | None = None
+        self._sample_stride = 1
+
+        # --- GR1-specific attributes ---
+        self._use_state = bool(use_state)
+        self._use_image_augmentation = bool(use_image_augmentation)
+        self._image_augmentor: T.Compose | None = None
+        self._state_stats: dict[str, torch.Tensor] | None = None
         self._dataset_roots: list[Path] = []
         self._datasets: list[GR1LeRobotDataset | None] | None = None
         self._cumulative_sizes: list[int] = []
 
         expected_info_path = self._root / "meta" / "info.json"
         if not expected_info_path.exists():
+            # Multi-root: a parent directory of multiple LeRobot datasets.
             self._dataset_roots = sorted(path.parent.parent for path in self._root.glob("*/meta/info.json"))
             if not self._dataset_roots:
                 raise FileNotFoundError(
                     f"No LeRobot datasets found under {self._root}. Expected either "
                     f"{expected_info_path} or */meta/info.json."
                 )
-
             total = 0
             for dataset_root in self._dataset_roots:
-                total += self._count_samples_for_root(dataset_root, int(chunk_length))
+                total += self._count_samples_for_root(dataset_root, self._chunk_length)
                 self._cumulative_sizes.append(total)
             if total == 0:
                 raise ValueError(f"No valid GR1 samples found under {self._root}.")
             self._datasets = [None] * len(self._dataset_roots)
-
-            first_root = self._dataset_roots[0]
-            self._info = json.loads((first_root / "meta" / "info.json").read_text())
-            self._modality = json.loads((first_root / "meta" / "modality.json").read_text())
-            self._stats = json.loads((first_root / "meta" / "stats.json").read_text())
-            self._fps = float(fps if fps is not None else self._info.get("fps", 20.0))
-            self._dt = 1.0 / self._fps
-            self._chunk_length = int(chunk_length)
-            self._mode = mode
-            self._tolerance_s = float(tolerance_s)
-            self._viewpoint = viewpoint
-            self._use_state = bool(use_state)
-            self._use_image_augmentation = bool(use_image_augmentation)
-            self._image_augmentor: T.Compose | None = None
-            self._domain_id = get_domain_id("gr1_lerobot")
-            self._norm_stats = None
-            self._state_stats = None
-            self._action_parts = self._ordered_parts("action")
-            self._state_parts = self._ordered_parts("state")
-            self._action_key = self._single_original_key("action")
-            self._state_key = self._single_original_key("state")
-            self._video_key = self._video_key_from_modality(viewpoint)
-            self._action_spec = build_action_spec(
-                *(Joint(n=end - start, label=name) for name, start, end in self._action_parts)
-            )
+            self._load_meta(self._dataset_roots[0], fps)
             return
 
-        self._info = json.loads((self._root / "meta" / "info.json").read_text())
-        self._modality = json.loads((self._root / "meta" / "modality.json").read_text())
-        self._stats = json.loads((self._root / "meta" / "stats.json").read_text())
-        self._fps = float(fps if fps is not None else self._info.get("fps", 20.0))
-        self._dt = 1.0 / self._fps
-        self._chunk_length = int(chunk_length)
-        self._mode = mode
-        self._tolerance_s = float(tolerance_s)
-        self._viewpoint = viewpoint
-        self._use_state = bool(use_state)
-        self._use_image_augmentation = bool(use_image_augmentation)
-        self._image_augmentor: T.Compose | None = None
-        self._domain_id = get_domain_id("gr1_lerobot")
-        self._norm_stats: dict[str, torch.Tensor] | None = None
-        self._state_stats: dict[str, torch.Tensor] | None = None
-
-        self._action_parts = self._ordered_parts("action")
-        self._state_parts = self._ordered_parts("state")
-        self._action_key = self._single_original_key("action")
-        self._state_key = self._single_original_key("state")
-        self._video_key = self._video_key_from_modality(viewpoint)
-        self._action_spec = build_action_spec(
-            *(Joint(n=end - start, label=name) for name, start, end in self._action_parts)
-        )
-
+        # Single-root dataset.
+        self._load_meta(self._root, fps)
         self._episodes = self._load_episodes()
         self._tasks = self._load_tasks()
-        # Compact per-episode window index (see _build_window_index): one parquet path
-        # per episode + a cumulative window-count int64 array. Avoids a per-window
-        # Python list, whose refcount churn would inflate fork/COW worker memory.
         self._episode_paths: list[Path] = []
         self._win_cumsum: np.ndarray = np.zeros(0, dtype=np.int64)
         self._row_cache_path: Path | None = None
         self._row_cache: list[dict[str, Any]] | None = None
         self._build_window_index()
 
+    # ------------------------------------------------------------------ #
+    # ActionBaseDataset ABC contract
+    # ------------------------------------------------------------------ #
     @property
-    def fps(self) -> float:
-        return self._fps
+    def action_dim(self) -> int:
+        return self._aspec.dim
 
-    @property
-    def chunk_length(self) -> int:
-        return self._chunk_length
+    def _action_spec(self) -> ActionSpec:
+        return self._aspec
 
+    @classmethod
+    def _stats_path(cls) -> Path:
+        raise NotImplementedError(
+            "GR1 normalizes from each dataset's meta/stats.json (action + state); "
+            "there is no class-level stats file."
+        )
+
+    # GR1 overrides the base mode setter to fan out to lazily-built sub-datasets.
     @property
     def mode(self) -> str:
         return self._mode
@@ -185,17 +170,24 @@ class GR1LeRobotDataset(Dataset):
                 if dataset is not None:
                     dataset.mode = value
 
-    @property
-    def domain_id(self) -> int:
-        return self._domain_id
-
-    @property
-    def action_dim(self) -> int:
-        return self._action_spec.dim
-
-    @property
-    def action_names(self) -> list[str]:
-        return self._action_spec.names
+    # ------------------------------------------------------------------ #
+    # Meta / index construction
+    # ------------------------------------------------------------------ #
+    def _load_meta(self, root: Path, fps: float | None) -> None:
+        """Load info/modality/stats and derive the (filtered, reordered) 29D layout."""
+        self._info = json.loads((root / "meta" / "info.json").read_text())
+        self._modality = json.loads((root / "meta" / "modality.json").read_text())
+        self._stats = json.loads((root / "meta" / "stats.json").read_text())
+        self._fps = float(fps if fps is not None else self._info.get("fps", 20.0))
+        self._dt = 1.0 / self._fps
+        self._action_parts = self._ordered_parts("action")
+        self._state_parts = self._ordered_parts("state")
+        self._action_key = self._single_original_key("action")
+        self._state_key = self._single_original_key("state")
+        self._video_key = self._video_key_from_modality(self._viewpoint)
+        self._aspec = build_action_spec(
+            *(Joint(n=end - start, label=name) for name, start, end in self._action_parts)
+        )
 
     @staticmethod
     def _count_samples_for_root(root: Path, chunk_length: int) -> int:
@@ -281,11 +273,6 @@ class GR1LeRobotDataset(Dataset):
         self._row_cache = rows
         return rows
 
-    def _choose_mode(self) -> str:
-        if self._mode == "joint":
-            return random.choice(_MODE_CHOICES)
-        return self._mode
-
     def _make_sub_dataset(self, dataset_idx: int) -> "GR1LeRobotDataset":
         return GR1LeRobotDataset(
             root=str(self._dataset_roots[dataset_idx]),
@@ -317,7 +304,7 @@ class GR1LeRobotDataset(Dataset):
                 prev_size += len(sub)
             return blocks
 
-        blocks: list[tuple[int, int]] = []
+        blocks = []
         prev = 0
         for c in self._win_cumsum.tolist():
             c = int(c)
@@ -326,6 +313,9 @@ class GR1LeRobotDataset(Dataset):
             prev = c
         return blocks
 
+    # ------------------------------------------------------------------ #
+    # Sample construction
+    # ------------------------------------------------------------------ #
     def __getitem__(self, idx: int) -> dict[str, Any]:
         if self._datasets is not None:
             idx = int(idx)
@@ -435,15 +425,7 @@ class GR1LeRobotDataset(Dataset):
         raw_state: torch.Tensor | None = None,
         **extras: Any,
     ) -> dict[str, Any]:
-        idle_frames = compute_idle_frames(
-            action,
-            self._action_spec,
-            eps_t=5e-3 / self._fps,
-            eps_r=np.deg2rad(1.5) / self._fps,
-            eps_g=1e-2,
-            joint_threshold=5e-3 / self._fps,
-            min_streak=3,
-        )
+        idle_frames = self._compute_idle_frames(action)
         normalized_action = normalize_action(action, "minmax", self._load_norm_stats())
         if raw_state is not None:
             # Prepend the initial observed state as a conditioning (clean) action
@@ -464,6 +446,9 @@ class GR1LeRobotDataset(Dataset):
             **extras,
         }
 
+    # ------------------------------------------------------------------ #
+    # Normalization (per-dataset, dual action/state stats)
+    # ------------------------------------------------------------------ #
     def _load_norm_stats(self) -> dict[str, torch.Tensor]:
         if self._norm_stats is not None:
             return self._norm_stats
