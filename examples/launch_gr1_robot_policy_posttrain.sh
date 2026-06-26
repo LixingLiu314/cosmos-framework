@@ -32,6 +32,10 @@ TOML_FILE="examples/toml/sft_config/gr1_robot_policy_posttrain.toml"
 : "${DATASET_PATH:=examples/data/lerobot_v30/gr1_lerobot}"
 : "${BASE_CHECKPOINT_PATH:=examples/checkpoints/Cosmos3-Nano}"
 
+# Base checkpoint, VAE and tokenizer are local; default to HF offline so no run-time
+# Hub network calls are attempted (set HF_HUB_OFFLINE=0 if you need a download).
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+
 # The experiment reads ${oc.env:GR1_DATA_ROOT}; bridge the launcher's DATASET_PATH to it.
 export GR1_DATA_ROOT="${GR1_DATA_ROOT:-$DATASET_PATH}"
 
@@ -55,7 +59,7 @@ EXTRA_DATASET_CHECK='[[ -f "$GR1_DATA_ROOT/meta/info.json" ]] || compgen -G "$GR
 : "${MAX_SAMPLES_PER_BATCH:=128}"
 : "${NUM_WORKERS:=4}"
 : "${PREFETCH_FACTOR:=4}"
-: "${PERSISTENT_WORKERS:=false}"
+: "${PERSISTENT_WORKERS:=true}"
 
 # Extra Hydra overrides from the environment: a space-separated string word-split into
 # the TAIL_OVERRIDES array (an exported string survives `bash <wrapper>`).
