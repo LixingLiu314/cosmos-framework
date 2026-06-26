@@ -65,9 +65,9 @@ EXTRA_DATASET_CHECK='[[ -f "$GR1_DATA_ROOT/meta/info.json" ]] || compgen -G "$GR
 # nested `dataloader_train.dataloader.*` path; the per-rank batch is
 # `dataloader_train.max_samples_per_batch` (the old DataPacker `max_batch_size`;
 # the old `pool_size` no longer exists).
-: "${MAX_SAMPLES_PER_BATCH:=256}"
-: "${NUM_WORKERS:=20}"
-: "${PREFETCH_FACTOR:=8}"
+: "${MAX_SAMPLES_PER_BATCH:=128}"
+: "${NUM_WORKERS:=16}"
+: "${PREFETCH_FACTOR:=4}"
 : "${PERSISTENT_WORKERS:=true}"
 
 # Run name -> job.name (drives BOTH the output dir and the W&B run name). Give each
