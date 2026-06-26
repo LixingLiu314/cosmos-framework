@@ -29,12 +29,21 @@
 # ============================================================================
 
 TOML_FILE="examples/toml/sft_config/gr1_robot_policy_posttrain.toml"
-: "${DATASET_PATH:=examples/data/lerobot_v30/gr1_lerobot}"
-: "${BASE_CHECKPOINT_PATH:=examples/checkpoints/Cosmos3-Nano}"
+: "${DATASET_PATH:=/root/workspace/mengya/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/}"
+: "${BASE_CHECKPOINT_PATH:=/root/workspace/mengya/cosmos-framework/examples/checkpoints/Cosmos3-Nano-DCP}"
+: "${WAN_VAE_PATH:=/root/.cache/huggingface/hub/models--Wan-AI--Wan2.2-TI2V-5B/snapshots/921dbaf3f1674a56f47e83fb80a34bac8a8f203e/Wan2.2_VAE.pth}"
+export WAN_VAE_PATH
 
 # Base checkpoint, VAE and tokenizer are local; default to HF offline so no run-time
 # Hub network calls are attempted (set HF_HUB_OFFLINE=0 if you need a download).
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+
+# W&B API key is a SECRET — keep it OUT of version control. Put it in
+# examples/gr1_wandb.env (gitignored via *.env), one line:  WANDB_API_KEY=xxxx
+# It is sourced here if present; otherwise set WANDB_API_KEY in your shell, or
+# export WANDB_MODE=disabled to skip logging.
+WANDB_ENV_FILE="${WANDB_ENV_FILE:-examples/gr1_wandb.env}"
+if [[ -f "$WANDB_ENV_FILE" ]]; then set -a; source "$WANDB_ENV_FILE"; set +a; fi
 
 # The experiment reads ${oc.env:GR1_DATA_ROOT}; bridge the launcher's DATASET_PATH to it.
 export GR1_DATA_ROOT="${GR1_DATA_ROOT:-$DATASET_PATH}"
