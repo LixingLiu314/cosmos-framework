@@ -45,6 +45,7 @@ import numpy as np
 import pyarrow.parquet as pq
 import torch
 import torchvision.transforms as T
+from torchvision.transforms import functional as TF
 from lerobot.datasets.video_utils import decode_video_frames
 
 from cosmos_framework.data.vfm.action.action_normalization import normalize_action
@@ -379,7 +380,9 @@ class GR1LeRobotDataset(ActionBaseDataset):
             self._image_augmentor = T.Compose([
                 T.RandomCrop((int(h * 0.95), int(w * 0.95))),
                 T.Resize((h, w), antialias=True),
-                T.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08),
+                # hue is applied once per episode in _load_episode_video (it is ~95%
+                # of the augmentation cost); here we keep the cheap per-window jitters.
+                T.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.0),
             ])
         # One sampled set of params applied uniformly across the window's frames
         # (temporally consistent), resampled per __getitem__.
@@ -401,6 +404,12 @@ class GR1LeRobotDataset(ActionBaseDataset):
         from_timestamp = float(episode.get(f"videos/{self._video_key}/from_timestamp", 0.0))
         frame_timestamps = [from_timestamp + float(row["timestamp"]) for row in rows]
         frames = decode_video_frames(self._video_path(episode, self._video_key), frame_timestamps, self._tolerance_s)
+        if self._use_image_augmentation:
+            # Per-episode hue jitter: one RGB<->HSV conversion for the whole episode
+            # instead of per window (~95% of the augmentation cost). Color robustness
+            # is a dataset-level property, so per-episode granularity is equivalent for
+            # learning while ~chunk_length x cheaper. Re-sampled each (re)stream.
+            frames = TF.adjust_hue(frames, random.uniform(-0.08, 0.08))
         self._video_cache_path = episode_path
         self._video_cache = frames
         return frames
