@@ -156,12 +156,14 @@ class GR1LeRobotDataset(Dataset):
 
         self._episodes = self._load_episodes()
         self._tasks = self._load_tasks()
-        self._rows: list[dict[str, Any]] = []
-        self._sample_indices: list[int] = []
-        self._episode_sample_indices: list[tuple[Path, int]] = []
+        # Compact per-episode window index (see _build_window_index): one parquet path
+        # per episode + a cumulative window-count int64 array. Avoids a per-window
+        # Python list, whose refcount churn would inflate fork/COW worker memory.
+        self._episode_paths: list[Path] = []
+        self._win_cumsum: np.ndarray = np.zeros(0, dtype=np.int64)
         self._row_cache_path: Path | None = None
         self._row_cache: list[dict[str, Any]] | None = None
-        self._load_rows_and_indices()
+        self._build_window_index()
 
     @property
     def fps(self) -> float:
@@ -253,11 +255,22 @@ class GR1LeRobotDataset(Dataset):
         parquet_path = self._root / "meta" / "tasks.parquet"
         return {int(row["task_index"]): str(row["task"]) for row in pq.read_table(parquet_path).to_pylist()}
 
-    def _load_rows_and_indices(self) -> None:
+    def _build_window_index(self) -> None:
+        """Build the compact per-episode window index: one parquet path per episode
+        (file) plus a cumulative window-count int64 array. The flat sample index maps
+        to ``(episode, row_start)`` via ``np.searchsorted`` at access time, so we never
+        materialize a per-window Python list (which would dirty fork/COW pages via
+        refcount churn and grow worker RSS over training)."""
+        paths: list[Path] = []
+        counts: list[int] = []
         for path in sorted((self._root / "data").glob("chunk-*/*.parquet")):
             num_rows = pq.ParquetFile(path).metadata.num_rows
-            if num_rows > self._chunk_length:
-                self._episode_sample_indices.extend((path, start) for start in range(num_rows - self._chunk_length))
+            n = int(num_rows) - self._chunk_length
+            if n > 0:
+                paths.append(path)
+                counts.append(n)
+        self._episode_paths = paths
+        self._win_cumsum = np.cumsum(counts, dtype=np.int64) if counts else np.zeros(0, dtype=np.int64)
 
     def _load_episode_rows(self, path: Path) -> list[dict[str, Any]]:
         if self._row_cache_path == path and self._row_cache is not None:
@@ -304,21 +317,13 @@ class GR1LeRobotDataset(Dataset):
                 prev_size += len(sub)
             return blocks
 
-        blocks = []
-        start = 0
-        run = 0
-        cur_path: Path | None = None
-        for path, _row_start in self._episode_sample_indices:
-            if path == cur_path:
-                run += 1
-                continue
-            if cur_path is not None:
-                blocks.append((start, run))
-                start += run
-            cur_path = path
-            run = 1
-        if cur_path is not None:
-            blocks.append((start, run))
+        blocks: list[tuple[int, int]] = []
+        prev = 0
+        for c in self._win_cumsum.tolist():
+            c = int(c)
+            if c > prev:
+                blocks.append((prev, c - prev))
+            prev = c
         return blocks
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
@@ -342,13 +347,12 @@ class GR1LeRobotDataset(Dataset):
             idx += len(self)
         if idx < 0 or idx >= len(self):
             raise IndexError(idx)
-        if self._episode_sample_indices:
-            episode_path, row_start = self._episode_sample_indices[idx]
-            rows = self._load_episode_rows(episode_path)
-            observation_rows = rows[row_start : row_start + self._chunk_length + 1]
-        else:
-            row_start = self._sample_indices[idx]
-            observation_rows = self._rows[row_start : row_start + self._chunk_length + 1]
+        file_idx = int(np.searchsorted(self._win_cumsum, idx, side="right"))
+        prev = int(self._win_cumsum[file_idx - 1]) if file_idx > 0 else 0
+        row_start = idx - prev
+        episode_path = self._episode_paths[file_idx]
+        rows = self._load_episode_rows(episode_path)
+        observation_rows = rows[row_start : row_start + self._chunk_length + 1]
         action_rows = observation_rows[: self._chunk_length]
         episode = self._episodes[int(observation_rows[0]["episode_index"])]
 
@@ -484,6 +488,4 @@ class GR1LeRobotDataset(Dataset):
     def __len__(self) -> int:
         if self._datasets is not None:
             return self._cumulative_sizes[-1]
-        if self._episode_sample_indices:
-            return len(self._episode_sample_indices)
-        return len(self._sample_indices)
+        return int(self._win_cumsum[-1]) if self._win_cumsum.size else 0
