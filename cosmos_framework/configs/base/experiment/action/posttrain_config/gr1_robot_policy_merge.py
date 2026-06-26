@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: OpenMDW-1.1
 
-"""``gr1_robot_policy_posttrain`` — Cosmos3-Nano GR1 action-policy SFT recipe.
+"""``gr1_robot_policy_merge`` — Cosmos3-Nano GR1 action-policy SFT recipe.
 
 Re-based onto the new action dataloader stack (``PackingDataLoader`` +
 ``RankPartitionedDataLoader`` + ``ActionIterableShuffleDataset``), mirroring
@@ -22,7 +22,7 @@ Usage (1 node, 8 GPU)::
     BASE_CHECKPOINT_PATH=<Cosmos3-Nano DCP dir> \\
     WAN_VAE_PATH=<Wan2.2_VAE.pth> \\
     torchrun --nproc_per_node=8 -m cosmos_framework.scripts.train \\
-        --sft-toml examples/toml/sft_config/gr1_robot_policy_posttrain.toml
+        --sft-toml examples/toml/sft_config/gr1_robot_policy_merge.toml
 """
 
 import copy
@@ -42,7 +42,7 @@ from cosmos_framework.data.vfm.action.datasets.action_sft_dataset import get_act
 cs = ConfigStore.instance()
 
 
-gr1_robot_policy_posttrain = LazyDict(
+gr1_robot_policy_merge = LazyDict(
     dict(
         defaults=[
             {"override /model": "mot_fsdp"},
@@ -71,7 +71,7 @@ gr1_robot_policy_posttrain = LazyDict(
         job=dict(
             project="cosmos3",
             group="gr1_robot_policy",
-            name="gr1_robot_policy_posttrain",
+            name="gr1_robot_policy_merge",
             wandb_mode="${oc.env:WANDB_MODE,online}",
         ),
         model=dict(
@@ -227,19 +227,19 @@ gr1_robot_policy_posttrain = LazyDict(
 
 
 # GR1 model resolution (NANO default is 720).
-gr1_robot_policy_posttrain["model"]["config"]["resolution"] = "256"
+gr1_robot_policy_merge["model"]["config"]["resolution"] = "256"
 
 # chunk_length=16 -> 17 observation frames; pin the VAE encode duration to match.
-gr1_robot_policy_posttrain["model"]["config"]["tokenizer"]["encode_exact_durations"] = [17]
+gr1_robot_policy_merge["model"]["config"]["tokenizer"]["encode_exact_durations"] = [17]
 
 # Uncap the packed-sequence length (NANO default 45056 caps + truncates long windows).
-gr1_robot_policy_posttrain["model"]["config"]["max_num_tokens_after_packing"] = -1
+gr1_robot_policy_merge["model"]["config"]["max_num_tokens_after_packing"] = -1
 
 # Weight the vision flow-matching loss 10x, balancing it against the action loss
 # (action_loss_weight=10) so both heads train at comparable gradient magnitude.
-gr1_robot_policy_posttrain["model"]["config"]["rectified_flow_training_config"]["loss_scale"] = 10.0
+gr1_robot_policy_merge["model"]["config"]["rectified_flow_training_config"]["loss_scale"] = 10.0
 
 
-for _item in [gr1_robot_policy_posttrain]:
+for _item in [gr1_robot_policy_merge]:
     _name = [k for k, v in globals().items() if v is _item][0]
     cs.store(group="experiment", package="_global_", name=_name, node=_item)

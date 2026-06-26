@@ -5,8 +5,8 @@
 # ============================================================================
 # Structured-TOML launch for GR1 action-policy SFT on Cosmos3-Nano (8B MoT).
 # Drives cosmos_framework.scripts.train against
-# examples/toml/sft_config/gr1_robot_policy_posttrain.toml (selects the
-# registered `gr1_robot_policy_posttrain` experiment; res256, GR1 29D joint
+# examples/toml/sft_config/gr1_robot_policy_merge.toml (selects the
+# registered `gr1_robot_policy_merge` experiment; res256, GR1 29D joint
 # policy + use_state, ego_view, trains the generation + action heads).
 #
 # Env vars (override for your filesystem):
@@ -21,14 +21,14 @@
 #   export EXTRA_TAIL_OVERRIDES="trainer.max_iter=10 checkpoint.save_iter=10 \
 #                                dataloader_train.max_samples_per_batch=8 \
 #                                dataloader_train.dataloader.num_workers=0"
-#   bash examples/launch_gr1_robot_policy_posttrain.sh
+#   bash examples/launch_gr1_robot_policy_merge.sh
 #
 # Multi-node: launch on every worker; the trainer reads torchrun's
 # --nnodes/--node_rank. For HSDP set
 # model.parallelism.data_parallel_replicate_degree = <num_nodes> (shard stays 8).
 # ============================================================================
 
-TOML_FILE="examples/toml/sft_config/gr1_robot_policy_posttrain.toml"
+TOML_FILE="examples/toml/sft_config/gr1_robot_policy_merge.toml"
 : "${DATASET_PATH:=/root/workspace/mengya/PhysicalAI-Robotics-GR00T-Teleop-Sim/LeRobot/}"
 : "${BASE_CHECKPOINT_PATH:=/root/workspace/mengya/cosmos-framework/examples/checkpoints/Cosmos3-Nano-DCP}"
 : "${WAN_VAE_PATH:=/root/.cache/huggingface/hub/models--Wan-AI--Wan2.2-TI2V-5B/snapshots/921dbaf3f1674a56f47e83fb80a34bac8a8f203e/Wan2.2_VAE.pth}"
@@ -65,8 +65,8 @@ EXTRA_DATASET_CHECK='[[ -f "$GR1_DATA_ROOT/meta/info.json" ]] || compgen -G "$GR
 # nested `dataloader_train.dataloader.*` path; the per-rank batch is
 # `dataloader_train.max_samples_per_batch` (the old DataPacker `max_batch_size`;
 # the old `pool_size` no longer exists).
-: "${MAX_SAMPLES_PER_BATCH:=128}"
-: "${NUM_WORKERS:=4}"
+: "${MAX_SAMPLES_PER_BATCH:=256}"
+: "${NUM_WORKERS:=16}"
 : "${PREFETCH_FACTOR:=4}"
 : "${PERSISTENT_WORKERS:=true}"
 
