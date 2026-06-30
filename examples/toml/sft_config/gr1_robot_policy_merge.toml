@@ -38,10 +38,10 @@ save_ops_regex = ["fmha"]
 vae_path = "${oc.env:WAN_VAE_PATH}"
 
 [scheduler]
-cycle_lengths = [20000]   # match max_iter
+cycle_lengths = [60000]   # match max_iter
 
 [trainer]
-max_iter     = 20000
+max_iter     = 60000
 logging_iter = 50
 
 [checkpoint]

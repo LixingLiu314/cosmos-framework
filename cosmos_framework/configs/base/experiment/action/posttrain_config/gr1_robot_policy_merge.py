@@ -102,7 +102,7 @@ gr1_robot_policy_merge = LazyDict(
         ),
         scheduler=dict(
             lr_scheduler_type="LambdaLinear",
-            cycle_lengths=[20000],  # match max_iter
+            cycle_lengths=[60000],  # match max_iter
             f_max=[0.4],
             f_min=[0.0],
             f_start=[0.0],
@@ -113,7 +113,7 @@ gr1_robot_policy_merge = LazyDict(
             distributed_parallelism="fsdp",
             grad_accum_iter=1,
             logging_iter=50,
-            max_iter=20000,
+            max_iter=60000,
             max_val_iter=None,
             run_validation=False,
             run_validation_on_start=False,
