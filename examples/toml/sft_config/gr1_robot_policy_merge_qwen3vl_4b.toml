@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: OpenMDW-1.1
+
+# ============================================================================
+# GR1 action-policy SFT — run config for the `gr1_robot_policy_merge_qwen3vl_4b`
+# experiment. The registered experiment keeps the GR1 policy-mode dataset setup,
+# loads Qwen3-VL-4B reasoner weights from QWEN_4B_MODEL_PATH, copies them to the
+# generator on fresh init, freezes the reasoner through optimizer filtering, and
+# trains the generator + VFM/action adapters on GR1.
+#
+# Env required:
+#   GR1_DATA_ROOT=/path/to/gr1_lerobot_root   (single dataset OR parent of datasets)
+#   QWEN_4B_MODEL_PATH=<Qwen3-VL-4B-Instruct HF id or local snapshot>
+#   WAN_VAE_PATH=<Wan2.2_VAE.pth>
+#   IMAGINAIRE_OUTPUT_ROOT=/path/to/output_root   # persist checkpoints
+# ============================================================================
+
+[job]
+task         = "vfm"
+experiment   = "gr1_robot_policy_merge_qwen3vl_4b"
+project      = "cosmos3"
+group        = "gr1_robot_policy"
+name         = "gr1_robot_policy_merge_qwen3vl_4b"
+wandb_mode   = "online"
+
+[model]
+precision = "bfloat16"
+
+[model.parallelism]
+data_parallel_shard_degree     = 8
+data_parallel_replicate_degree = 1
+
+[model.activation_checkpointing]
+mode           = "full"
+save_ops_regex = ["fmha"]
+
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH}"
+
+[scheduler]
+cycle_lengths = [60000]
+
+[trainer]
+max_iter     = 60000
+logging_iter = 50
+
+[checkpoint]
+# Empty load_path means fresh init: no Cosmos3-Nano 8B DCP warm start.
+load_path = ""
+save_iter = 1000
